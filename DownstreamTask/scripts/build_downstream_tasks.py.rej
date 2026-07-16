@@ -1,0 +1,62 @@
+--- Task23/API_Exp/Code_Only/下游任务/scripts/build_downstream_tasks.py
++++ Task23/API_Exp/Code_Only/下游任务/scripts/build_downstream_tasks.py
+@@ -1,3 +1,9 @@
++"""Build the frozen bilingual downstream task and prompt definitions.
++
++The generated JSON is the sole prompt input to the formal downstream runner.
++Changing this file requires a new result batch and new prompt hashes.
++"""
++
+ from __future__ import annotations
+ 
+--- Task23/API_Exp/Code_Only/下游任务/scripts/run_downstream.py
++++ Task23/API_Exp/Code_Only/下游任务/scripts/run_downstream.py
+@@ -1,3 +1,11 @@
++"""Call all enabled models for every downstream task, language, and repeat.
++
++The request payload intentionally contains only model and messages. Invalid
++format and transport retries resend the identical frozen prompt. Every record
++stores raw text and a prompt hash in outputs/downstream_raw_responses.jsonl;
++existing unique keys are skipped unless overwrite is explicitly enabled.
++"""
++
+ from __future__ import annotations
+ 
+--- Task23/API_Exp/Code_Only/下游任务/scripts/parse_downstream.py
++++ Task23/API_Exp/Code_Only/下游任务/scripts/parse_downstream.py
+@@ -1,3 +1,10 @@
++"""Strictly parse and score raw downstream responses.
++
++Parsing is repeated independently of the online validator. Exact N/A remains a
++valid response with no numeric score; malformed responses remain invalid. The
++script writes both an audit table and a score-ready long table.
++"""
++
+ from __future__ import annotations
+ 
+--- Task23/API_Exp/Code_Only/下游任务/scripts/aggregate_downstream.py
++++ Task23/API_Exp/Code_Only/下游任务/scripts/aggregate_downstream.py
+@@ -1,3 +1,10 @@
++"""Aggregate downstream scores over repeats, tasks, and dimensions.
++
++N/A values are excluded rather than scored as zero. Task means use available
++repeats, dimension means use available task means, and all outputs retain
++counts and N/A rates so variable coverage remains auditable.
++"""
++
+ from __future__ import annotations
+ 
+--- Task23/API_Exp/Code_Only/下游任务/scripts/prepare_scale_scores.py
++++ Task23/API_Exp/Code_Only/下游任务/scripts/prepare_scale_scores.py
+@@ -1,3 +1,10 @@
++"""Prepare PromptA, PromptB, and PromptMean scale scores for analysis.
++
++Each prompt condition is first averaged over its five scale repeats.
++PromptMean is computed only when both prompt-specific means are available.
++Only official MFQ-30 and OUS-9 dimensions required downstream are retained.
++"""
++
+ from __future__ import annotations
+ 
+--- Task23/API_Exp/Code_Only/下游任务/scripts/analyze_correlations.py
++++ Task23/API_Exp/Code_Only/下游任务/scripts/analyze_correlations.py
