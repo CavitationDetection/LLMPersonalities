@@ -1,0 +1,24 @@
+--- Task23/API_Exp/Code_Only/Tools/diagnose_scale_responses.py
++++ Task23/API_Exp/Code_Only/Tools/diagnose_scale_responses.py
+@@ -1,3 +1,10 @@
++"""Audit one randomly selected scale item across every final model.
++
++Unlike the formal workbook runner, this diagnostic stores the complete request
++and response JSON, usage fields, finish reason, visible content, and strict
++parse result. It sends exactly one request per model and performs no retries.
++"""
++
+ from __future__ import annotations
+ 
+--- Task23/API_Exp/Code_Only/Tools/example_single_turn_test.py
++++ Task23/API_Exp/Code_Only/Tools/example_single_turn_test.py
+@@ -1,3 +1,9 @@
++"""Preview or send one questionnaire item as a single-turn request.
++
++Preview mode is the default and performs no API call. Use this helper to inspect
++the final system/user messages before a batch, not to create formal results.
++"""
++
+ import argparse
+ import csv
+ import json

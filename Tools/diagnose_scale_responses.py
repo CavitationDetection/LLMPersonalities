@@ -1,0 +1,344 @@
+"""Audit one randomly selected scale item across every final model.
+
+Unlike the formal workbook runner, this diagnostic stores the complete request
+and response JSON, usage fields, finish reason, visible content, and strict
+parse result. It sends exactly one request per model and performs no retries.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import random
+import secrets
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+import requests
+
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import run_no_memory_batch as batch  # noqa: E402
+
+
+def visible_text(content) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("content") or ""))
+            else:
+                parts.append(str(item))
+        return "\n".join(parts).strip()
+    return str(content).strip()
+
+
+def pick_item(seed: int, prompt_variant: str):
+    rng = random.Random(seed)
+    selected_sheets = batch.parse_selected_sheets(batch.DEFAULT_SELECTED_SHEETS_FILE)
+    questionnaires = batch.filter_questionnaires(batch.load_questionnaires(), selected_sheets)
+    candidates = []
+    for sheet_name, frame in questionnaires.items():
+        for spec in batch.build_item_specs(frame):
+            candidates.append((sheet_name, frame, spec))
+
+    sheet_name, frame, spec = rng.choice(candidates)
+    language = rng.choice(list(batch.DEFAULT_LANGUAGES))
+    row = frame.iloc[spec["row_position"]]
+    protocol = batch.load_protocol(language)
+    system_prompt, user_prompt, options_text = batch.build_messages(
+        sheet_name=sheet_name,
+        row=row,
+        language=language,
+        prompt_variant=prompt_variant,
+        protocol_text=protocol,
+    )
+    return {
+        "candidate_count": len(candidates),
+        "sheet": sheet_name,
+        "item_key": spec["item_key"],
+        "item_label": spec["display_label"],
+        "part": spec["part_label"],
+        "number": spec["number_label"],
+        "language": language,
+        "prompt_variant": prompt_variant,
+        "question": str(row.get(batch.get_question_column(language), "")).strip(),
+        "options": options_text,
+        "allowed_options": batch.extract_allowed_options(options_text),
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+    }
+
+
+def usage_fields(usage: dict) -> dict:
+    completion_details = usage.get("completion_tokens_details") or {}
+    return {
+        "prompt_tokens": usage.get("prompt_tokens"),
+        "completion_tokens": usage.get("completion_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+        "reasoning_tokens": completion_details.get("reasoning_tokens"),
+        "text_tokens": completion_details.get("text_tokens"),
+    }
+
+
+def call_model(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    allowed_options: list[str],
+    timeout: int,
+    max_tokens: int,
+) -> dict:
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": max_tokens,
+    }
+    url = base_url.rstrip("/") + "/chat/completions"
+    started = time.time()
+    record = {
+        "model_name": model,
+        "request_url": url,
+        "request_payload": payload,
+        "request_timeout_seconds": timeout,
+        "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    try:
+        response = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=timeout,
+        )
+        record["elapsed_seconds"] = round(time.time() - started, 3)
+        record["http_status"] = response.status_code
+        record["response_headers"] = {
+            key: value
+            for key, value in response.headers.items()
+            if key.lower() != "set-cookie"
+        }
+        record["raw_response_body"] = response.text
+        try:
+            response_json = response.json()
+        except ValueError:
+            response_json = None
+        record["response_json"] = response_json
+
+        if not response.ok:
+            record["api_error"] = f"HTTP {response.status_code}"
+            return record
+        if not isinstance(response_json, dict):
+            record["api_error"] = "response_is_not_a_json_object"
+            return record
+
+        choices = response_json.get("choices") or []
+        choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        content = message.get("content")
+        text = visible_text(content)
+        parse_result = batch.parse_answer(text, allowed_options)
+        usage = response_json.get("usage") if isinstance(response_json.get("usage"), dict) else {}
+        record.update(
+            {
+                "response_id": response_json.get("id"),
+                "returned_model": response_json.get("model"),
+                "finish_reason": choice.get("finish_reason"),
+                "message": message,
+                "message_content": content,
+                "visible_text": text,
+                "parse_result": parse_result,
+                "usage": usage,
+                **usage_fields(usage),
+                "api_error": None,
+            }
+        )
+        return record
+    except Exception as exc:
+        record["elapsed_seconds"] = round(time.time() - started, 3)
+        record["http_status"] = None
+        record["api_error"] = f"{type(exc).__name__}: {exc}"
+        return record
+
+
+def summary_row(record: dict) -> dict:
+    parsed = record.get("parse_result") or {}
+    return {
+        "model_name": record["model_name"],
+        "diagnostic_attempt": record.get("diagnostic_attempt", 1),
+        "http_status": record.get("http_status"),
+        "elapsed_seconds": record.get("elapsed_seconds"),
+        "returned_model": record.get("returned_model"),
+        "finish_reason": record.get("finish_reason"),
+        "prompt_tokens": record.get("prompt_tokens"),
+        "completion_tokens": record.get("completion_tokens"),
+        "reasoning_tokens": record.get("reasoning_tokens"),
+        "text_tokens": record.get("text_tokens"),
+        "message_content_json": json.dumps(
+            record.get("message_content"), ensure_ascii=False
+        ),
+        "visible_text": record.get("visible_text"),
+        "parsed_answer": parsed.get("parsed"),
+        "parse_status": parsed.get("status"),
+        "parse_note": parsed.get("note"),
+        "api_error": record.get("api_error"),
+        "response_id": record.get("response_id"),
+    }
+
+
+def markdown_cell(value) -> str:
+    if value is None:
+        return ""
+    return str(value).replace("|", "\\|").replace("\n", "<br>")
+
+
+def write_summary(path: Path, metadata: dict, rows: list[dict]) -> None:
+    targeted_retries = metadata.get("targeted_retries", [])
+    call_note = "one request per model, no retry"
+    if targeted_retries:
+        call_note = (
+            "one initial request per model, plus "
+            f"{len(targeted_retries)} targeted transport-error retry"
+        )
+    lines = [
+        "# Scale API response diagnostic",
+        "",
+        f"- Timestamp: `{metadata['created_at']}`",
+        f"- Random seed: `{metadata['random_seed']}`",
+        f"- Scale/item: `{metadata['selected_item']['sheet']} / {metadata['selected_item']['item_label']}`",
+        f"- Language/prompt: `{metadata['selected_item']['language']} / {metadata['selected_item']['prompt_variant']}`",
+        f"- Request parameters: `max_tokens={metadata['max_tokens']}`; all sampling parameters omitted",
+        f"- Calls: {call_note}",
+        "",
+        "| Model | Attempt | HTTP | Finish | Completion | Reasoning | Text | Content | Parse | Error |",
+        "|---|---:|---:|---|---:|---:|---:|---|---|---|",
+    ]
+    for row in rows:
+        lines.append(
+            "| "
+            + " | ".join(
+                markdown_cell(row.get(key))
+                for key in [
+                    "model_name",
+                    "diagnostic_attempt",
+                    "http_status",
+                    "finish_reason",
+                    "completion_tokens",
+                    "reasoning_tokens",
+                    "text_tokens",
+                    "visible_text",
+                    "parse_status",
+                    "api_error",
+                ]
+            )
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Selected question",
+            "",
+            metadata["selected_item"]["user_prompt"],
+            "",
+            "Full request and response objects are stored in `raw_responses.jsonl`.",
+        ]
+    )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Send one randomly selected scale item to every final API and save full responses."
+    )
+    parser.add_argument("--prompt", choices=["A", "B"], default="A")
+    parser.add_argument("--max-tokens", type=int, default=32)
+    parser.add_argument("--timeout", type=int, default=90)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--output-dir", default=None)
+    args = parser.parse_args()
+
+    seed = args.seed if args.seed is not None else secrets.randbits(64)
+    selected_item = pick_item(seed, args.prompt)
+    models = batch.parse_selected_models(batch.DEFAULT_SELECTED_MODELS_FILE)
+    base_url, api_key, config_source = batch.load_api_config()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = (
+        Path(args.output_dir).resolve()
+        if args.output_dir
+        else ROOT / "Outputs" / "Diagnostics" / f"scale_max_tokens32_9api_{timestamp}"
+    )
+    output_dir.mkdir(parents=True, exist_ok=False)
+
+    metadata = {
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "random_seed": seed,
+        "config_source": config_source,
+        "base_url": base_url,
+        "model_count": len(models),
+        "models": models,
+        "max_tokens": args.max_tokens,
+        "timeout_seconds": args.timeout,
+        "sampling_parameters": "omitted",
+        "retries": 0,
+        "selected_item": selected_item,
+    }
+    (output_dir / "test_metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(
+        f"Selected: {selected_item['sheet']} {selected_item['item_label']} "
+        f"language={selected_item['language']} prompt={args.prompt} seed={seed}",
+        flush=True,
+    )
+    print(f"Output: {output_dir}", flush=True)
+
+    records = []
+    raw_path = output_dir / "raw_responses.jsonl"
+    for index, model in enumerate(models, start=1):
+        print(f"[{index}/{len(models)}] calling {model}", flush=True)
+        record = call_model(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            system_prompt=selected_item["system_prompt"],
+            user_prompt=selected_item["user_prompt"],
+            allowed_options=selected_item["allowed_options"],
+            timeout=args.timeout,
+            max_tokens=args.max_tokens,
+        )
+        record["diagnostic_attempt"] = 1
+        records.append(record)
+        with raw_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        print(
+            f"  HTTP={record.get('http_status')} finish={record.get('finish_reason')} "
+            f"content={record.get('visible_text')!r} error={record.get('api_error')!r}",
+            flush=True,
+        )
+
+    rows = [summary_row(record) for record in records]
+    with (output_dir / "summary.csv").open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    write_summary(output_dir / "SUMMARY.md", metadata, rows)
+    print(f"Finished: {output_dir}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
