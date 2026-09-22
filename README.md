@@ -152,7 +152,7 @@ python run_no_memory_batch.py --dry-run --prompt A --repeats 1
 Downstream dry-run:
 
 ```bash
-cd 下游任务
+cd Downstream
 DOWNSTREAM_DRY_RUN=1 python scripts/run_downstream.py
 ```
 
@@ -161,8 +161,8 @@ Compile and shell syntax checks:
 ```bash
 python -m compileall -q .
 bash -n Submit.sh
-bash -n 下游任务/Submit_Downstream.sh
-bash -n 下游任务/Run_Part2_Analysis.sh
+bash -n Downstream/Submit_Downstream.sh
+bash -n Downstream/Run_Part2_Analysis.sh
 ```
 
 ## Reproducibility Boundaries
