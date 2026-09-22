@@ -30,7 +30,7 @@ Code_Only/
         └── analyze_correlations.py
 ```
 
-> Note: The actual directory name uses Chinese characters (`下游任务`) to match the original project layout. All documentation and comments are in English.
+> Note: The actual directory name uses Chinese characters (`Downstream`) to match the original project layout. All documentation and comments are in English.
 
 ## Two Formal Pipelines
 
