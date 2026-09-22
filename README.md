@@ -85,14 +85,14 @@ Downstream request behavior:
 Generation and parsing entry point:
 
 ```bash
-cd 下游任务
+cd Downstream
 sbatch Submit_Downstream.sh
 ```
 
 Aggregation and correlation analysis entry point:
 
 ```bash
-cd 下游任务
+cd Downstream
 ./Run_Part2_Analysis.sh
 ```
 
