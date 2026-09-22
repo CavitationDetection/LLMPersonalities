@@ -98,7 +98,7 @@ cd Downstream
 
 Correlation analysis uses PromptA and PromptB scale scores as primary inputs, and additionally computes the equal-weight `PromptMean=(PromptA+PromptB)/2` as a sensitivity analysis. The five repeats are aggregated within each model first; the unit of correlation analysis is always the model, never the repeat.
 
-Per-script inputs/outputs and N/A aggregation rules for the downstream side are in `下游任务/README.md`.
+Per-script inputs/outputs and N/A aggregation rules for the downstream side are in `Downstream/README.md`.
 
 ## External Inputs
 
@@ -111,8 +111,8 @@ Test_File/_AI_Protocol_E/_AI_Protocol.xlsx
 Test_File/API_Selected_Final9.txt
 Test_File/Sheet_Selected_Final7.txt
 Downstream/data/model_list.json
-统计/PromptA/最终结果_原始文献复核/final_scores_by_run_language_official_only.csv
-统计/PromptB/最终结果_原始文献复核/final_scores_by_run_language_official_only.csv
+statisitc/PromptA/final_result/final_scores_by_run_language_official_only.csv
+statisitc/PromptB/final_result/final_scores_by_run_language_official_only.csv
 ```
 
 API credentials are read from environment variables first:
@@ -170,5 +170,5 @@ bash -n Downstream/Run_Part2_Analysis.sh
 - `build_downstream_tasks.py` is the code source for downstream items and frozen prompts; running it produces `Downstream/prompts/downstream_tasks.json`.
 - Model names and scale selection are determined by external allowlists, not hard-coded in analysis scripts.
 - Final scale score tables are statistical data products and are not in the code-only directory; downstream analysis only reads official-dimension CSVs.
-- Results, figures, and historical scripts under `Outputs/`, `统计/`, and `Archive/` are not part of this code package.
+- Results, figures, and historical scripts under `Outputs/`, `Statistic/`, and `Archive/` are not part of this code package.
 - If formal prompts are modified, start a new independent result batch; do not mix with existing prompt hashes or workbooks.
